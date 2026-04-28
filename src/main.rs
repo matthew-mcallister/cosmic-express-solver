@@ -115,13 +115,28 @@ struct Mutation {
 #[derive(Debug)]
 struct Stepper<'s> {
     state: &'s mut State,
-    mutations: Vec<Mutation>,
     homes_filled: u8,
     passengers_taken: u8,
     old_passenger: Option<Passenger>,
 }
 
 impl<'s> Stepper<'s> {
+    fn new(state: &'s mut State) -> Self {
+        if state.mutations.len() <= state.depth as usize {
+            state.mutations.resize_with(state.depth as usize + 1, || Vec::with_capacity(32));
+        }
+        Self {
+            homes_filled: 0,
+            passengers_taken: 0,
+            old_passenger: state.passenger,
+            state,
+        }
+    }
+
+    fn mutations(&mut self) -> &mut Vec<Mutation> {
+        &mut self.state.mutations[self.state.depth as usize]
+    }
+
     fn check_home(&mut self, i: u8, j: u8) {
         match self.state.grid.get(i, j) {
             Content::BlueHome if self.state.passenger == Some(Passenger::Blue) => {
@@ -129,14 +144,14 @@ impl<'s> Stepper<'s> {
                 self.state.empty_homes -= 1;
                 self.homes_filled += 1;
                 *self.state.grid.get_mut(i, j) = Content::Obstacle as u8;
-                self.mutations.push(Mutation { i, j, value: Content::BlueHome as u8 });
+                self.mutations().push(Mutation { i, j, value: Content::BlueHome as u8 });
             },
             Content::OrangeHome if self.state.passenger == Some(Passenger::Orange) => {
                 self.state.passenger = None;
                 self.state.empty_homes -= 1;
                 self.homes_filled += 1;
                 *self.state.grid.get_mut(i, j) = Content::Obstacle as u8;
-                self.mutations.push(Mutation { i, j, value: Content::OrangeHome as u8 });
+                self.mutations().push(Mutation { i, j, value: Content::OrangeHome as u8 });
             },
             _ => {},
         }
@@ -165,14 +180,14 @@ impl<'s> Stepper<'s> {
                 self.passengers_taken += 1;
                 self.state.waiting_passengers -= 1;
                 *self.state.grid.get_mut(i, j) = Content::Obstacle as u8;
-                self.mutations.push(Mutation { i, j, value: Content::BlueGuy as u8 });
+                self.mutations().push(Mutation { i, j, value: Content::BlueGuy as u8 });
             },
             Content::OrangeGuy => {
                 self.state.passenger = Some(Passenger::Orange);
                 self.passengers_taken += 1;
                 self.state.waiting_passengers -= 1;
                 *self.state.grid.get_mut(i, j) = Content::Obstacle as u8;
-                self.mutations.push(Mutation { i, j, value: Content::OrangeGuy as u8 });
+                self.mutations().push(Mutation { i, j, value: Content::OrangeGuy as u8 });
             },
             _ => {},
         }
@@ -194,7 +209,7 @@ impl<'s> Stepper<'s> {
     }
 
     fn restore(&mut self) {
-        for mutation in self.mutations.drain(..).rev() {
+        while let Some(mutation) = self.mutations().pop() {
             *self.state.grid.get_mut(mutation.i, mutation.j) = mutation.value;
         }
         self.state.waiting_passengers += self.passengers_taken;
@@ -208,11 +223,35 @@ struct State {
     visited: u64,
     i: u8,
     j: u8,
-    step: u8,
+    depth: u8,
     passenger: Option<Passenger>,
     waiting_passengers: u8,
     empty_homes: u8,
     grid: Grid,
+    // Manual memory management
+    mutations: Vec<Vec<Mutation>>,
+}
+
+impl State {
+    fn new(grid: Grid) -> Self {
+        Self {
+            visited: 0,
+            i: grid.entry.0,
+            j: grid.entry.1,
+            depth: 0,
+            passenger: grid.passenger,
+            empty_homes: grid.cells.iter().filter(|&&cell| {
+                let content = Content::from(cell);
+                content == Content::BlueHome || content == Content::OrangeHome
+            }).count() as u8,
+            waiting_passengers: grid.cells.iter().filter(|&&cell| {
+                let content = Content::from(cell);
+                content == Content::BlueGuy || content == Content::OrangeGuy
+            }).count() as u8,
+            grid,
+            mutations: Vec::with_capacity(100),
+        }
+    }
 }
 
 // Does DFS to check that all passengers/homes are reachable from this
@@ -275,7 +314,7 @@ fn solvable(state: &State, i: u8, j: u8) -> bool {
 }
 
 // Return None when solution is found to short circuit the search
-fn dfs(state: &mut State, i: u8, j: u8, check_reachability: bool) -> Option<()> {
+fn dfs(state: &mut State, i: u8, j: u8, depth: u8, check_reachability: bool) -> Option<()> {
     match state.grid.get(i, j) {
         Content::None => {
             if check_reachability && !solvable(state, i, j) {
@@ -291,16 +330,10 @@ fn dfs(state: &mut State, i: u8, j: u8, check_reachability: bool) -> Option<()> 
             let (old_x, old_y) = (state.i, state.j);
             state.i = i;
             state.j = j;
-            state.step += 1;
-            *state.grid.get_mut(i, j) = state.step;
-            let mut stepper = Stepper {
-                mutations: Vec::with_capacity(16),
-                homes_filled: 0,
-                passengers_taken: 0,
-                old_passenger: state.passenger,
-                state,
-            };
-            stepper.mutations.push(Mutation { i, j, value: Content::None as u8 });
+            state.depth += 1;
+            *state.grid.get_mut(i, j) = state.depth;
+            let mut stepper = Stepper::new(state);
+            stepper.mutations().push(Mutation { i, j, value: Content::None as u8 });
             if stepper.state.passenger.is_some() {
                 stepper.check_homes();
                 stepper.check_passengers();
@@ -314,23 +347,23 @@ fn dfs(state: &mut State, i: u8, j: u8, check_reachability: bool) -> Option<()> 
 
             // Recursion
             if i > 0 {
-                dfs(stepper.state, i - 1, j, is_partitioned)?;
+                dfs(stepper.state, i - 1, j, depth, is_partitioned)?;
             }
             if i < stepper.state.grid.height - 1 {
-                dfs(stepper.state, i + 1, j, is_partitioned)?;
+                dfs(stepper.state, i + 1, j, depth, is_partitioned)?;
             }
             if j > 0 {
-                dfs(stepper.state, i, j - 1, is_partitioned)?;
+                dfs(stepper.state, i, j - 1, depth, is_partitioned)?;
             }
             if j < stepper.state.grid.width - 1 {
-                dfs(stepper.state, i, j + 1, is_partitioned)?;
+                dfs(stepper.state, i, j + 1, depth, is_partitioned)?;
             }
 
             // Restore state
             stepper.restore();
             state.i = old_x;
             state.j = old_y;
-            state.step -= 1;
+            state.depth -= 1;
 
             Some(())
         },
@@ -352,23 +385,8 @@ fn dfs(state: &mut State, i: u8, j: u8, check_reachability: bool) -> Option<()> 
 
 fn solve(grid: Grid) -> Grid {
     let entry = grid.entry;
-    let mut state = State {
-        visited: 0,
-        i: entry.0,
-        j: entry.1,
-        step: 0,
-        passenger: grid.passenger,
-        empty_homes: grid.cells.iter().filter(|&&cell| {
-            let content = Content::from(cell);
-            content == Content::BlueHome || content == Content::OrangeHome
-        }).count() as u8,
-        waiting_passengers: grid.cells.iter().filter(|&&cell| {
-            let content = Content::from(cell);
-            content == Content::BlueGuy || content == Content::OrangeGuy
-        }).count() as u8,
-        grid,
-    };
-    dfs(&mut state, entry.0, entry.1, false);
+    let mut state = State::new(grid);
+    dfs(&mut state, entry.0, entry.1, 0, false);
     state.grid
 }
 
@@ -502,17 +520,7 @@ fn test_solvable_reachable_targets_and_exit() {
         e..x
         .oO.
     ");
-    let state = State {
-        visited: 0,
-        i: grid.entry.0,
-        j: grid.entry.1,
-        step: 0,
-        passenger: None,
-        waiting_passengers: 2,
-        empty_homes: 2,
-        grid,
-    };
-
+    let state = State::new(grid);
     assert!(solvable(&state, 2, 1));
 }
 
@@ -524,17 +532,7 @@ fn test_solvable_detects_blocked_exit_or_targets() {
         ////x/
         //////
     ");
-    let state = State {
-        visited: 0,
-        i: grid.entry.0,
-        j: grid.entry.1,
-        step: 0,
-        passenger: None,
-        waiting_passengers: 0,
-        empty_homes: 0,
-        grid,
-    };
-
+    let state = State::new(grid);
     assert!(!solvable(&state, 1, 2));
 }
 
@@ -545,17 +543,7 @@ fn test_solvable_does_not_search_past_exit() {
         /e.xb/
         //////
     ");
-    let state = State {
-        visited: 0,
-        i: grid.entry.0,
-        j: grid.entry.1,
-        step: 0,
-        passenger: None,
-        waiting_passengers: 1,
-        empty_homes: 0,
-        grid,
-    };
-
+    let state = State::new(grid);
     assert!(!solvable(&state, 1, 2));
 }
 
