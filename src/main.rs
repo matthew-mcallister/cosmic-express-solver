@@ -469,6 +469,7 @@ fn parse_grid(grid: &str) -> Grid {
     let width = lines[0].len() as u8;
     let cells = vec![0; (width * height) as usize];
     let mut grid = Grid { entry: (0, 0), num_cars: 1, width, height, cells };
+    let mut entry = None;
     for (i, line) in lines.into_iter().enumerate() {
         for (j, ch) in line.chars().enumerate() {
             let cell = match ch {
@@ -476,7 +477,8 @@ fn parse_grid(grid: &str) -> Grid {
                 '#' => Content::Rail,
                 '/' => Content::Obstacle,
                 'e' => {
-                    grid.entry = (i as u8, j as u8);
+                    assert!(entry.is_none(), "multiple entrances");
+                    entry = Some((i as u8, j as u8));
                     Content::None
                 },
                 'x' => Content::Exit,
@@ -492,6 +494,8 @@ fn parse_grid(grid: &str) -> Grid {
             *grid.get_mut(i as u8, j as u8) = cell as u8;
         }
     }
+
+    grid.entry = entry.expect("missing entrance");
 
     grid
 }
@@ -562,7 +566,7 @@ mod tests {
         let grid = parse_grid(r"
             /////
             /.../
-            //.//
+            //e//
             /.../
             /////
         ");
@@ -571,16 +575,7 @@ mod tests {
         let grid = parse_grid(r"
             /////
             /.../
-            /.../
-            /.../
-            /////
-        ");
-        assert!(!is_local_partitioned(&grid, 2, 2));
-
-        let grid = parse_grid(r"
-            /////
-            /.../
-            //../
+            /.e./
             /.../
             /////
         ");
@@ -589,7 +584,16 @@ mod tests {
         let grid = parse_grid(r"
             /////
             /.../
+            //e./
             /.../
+            /////
+        ");
+        assert!(!is_local_partitioned(&grid, 2, 2));
+
+        let grid = parse_grid(r"
+            /////
+            /.../
+            /.e./
             //.//
             /////
         ");
@@ -633,6 +637,7 @@ mod tests {
 
     #[test]
     fn test_solve_easy() {
+        // custom
         let grid = parse_grid(r"
             ......
             .b.o..
@@ -653,6 +658,7 @@ mod tests {
 
     #[test]
     fn test_solve_medium() {
+        // andromeda 9
         let grid = parse_grid(r"
             ...........
             ..........x
@@ -714,6 +720,7 @@ mod tests {
 
     #[test]
     fn test_solve_passenger_conflict() {
+        // vela 5
         let mut grid = parse_grid(r"
             .x.....e.
             .........
@@ -743,6 +750,7 @@ mod tests {
 
     #[test]
     fn test_solve_two_car() {
+        // vela 8
         let mut grid = parse_grid(r"
             .e........
             ..........
@@ -772,26 +780,33 @@ mod tests {
 
     #[test]
     fn test_solve_wildcard() {
+        // taurus 13
         let mut grid = parse_grid(r"
-            ...........
-            ...........
-            .......?...
-            .o.b../?.b.
-            .o.....?.b.
-            ...........
-            ..........x
-            ...........
+            ......b
+            .......
+            e...O..
+            .......
+            ......?
+            oo.....
+            ......B
+            .......
+            x...?..
+            .......
+            ......b
         ");
         grid.num_cars = 2;
         let expected = dedent!(r"
-            1.7834..12.
-            2.6925..03.
-            3.5016./945
-            4/4b.7//8/6
-            5/3..8./7/7
-            612..9236.8
-            70...0145.x
-            89.........
+            343456/
+            252..7.
+            161./8.
+            .70109.
+            .89290/
+            //4381.
+            765672/
+            8945.3.
+            x03./4.
+            412985.
+            321076/
         ");
         let got = format!("{}", solve(grid));
         assert_eq_grid!(got, expected);
@@ -830,15 +845,17 @@ mod tests {
 
 fn main() {
     let mut grid = parse_grid(r"
-        .x.....e.
-        .........
-        ..B/./B..
-        ../.../..
-        .........
-        B./....//
-        B.b/.b.b.
-        ..b......
-        .........
+        ......b
+        .......
+        e...O..
+        .......
+        ......?
+        oo.....
+        ......B
+        .......
+        x...?..
+        .......
+        ......b
     ");
     grid.num_cars = 2;
     let soln = solve(grid);
