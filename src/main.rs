@@ -1,17 +1,18 @@
-use dedent::dedent;
-
 use std::fmt::Display;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Passenger {
     Blue,
     Orange,
+    Green,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Content {
     None = 0,
     Rail = 1,
+    GreenGuy = 247,
+    GreenHome = 248,
     WildcardHome = 249,
     Exit = 250,
     BlueGuy = 251,
@@ -31,6 +32,8 @@ impl From<u8> for Content {
     fn from(value: u8) -> Self {
         match value {
             0 => Self::None,
+            247 => Self::GreenGuy,
+            248 => Self::GreenHome,
             249 => Self::WildcardHome,
             250 => Self::Exit,
             251 => Self::BlueGuy,
@@ -44,8 +47,13 @@ impl From<u8> for Content {
 }
 
 impl Content {
-    fn is_passenger(&self) -> bool {
-        matches!(self, Content::BlueGuy | Content::OrangeGuy)
+    fn passenger(self) -> Option<Passenger> {
+        match self {
+            Content::BlueGuy => Some(Passenger::Blue),
+            Content::OrangeGuy => Some(Passenger::Orange),
+            Content::GreenGuy => Some(Passenger::Green),
+            _ => None,
+        }
     }
 }
 
@@ -152,6 +160,7 @@ impl<'s> Stepper<'s> {
         match content {
             Content::BlueHome if self.state.cars[car].passenger == Some(Passenger::Blue) => {},
             Content::OrangeHome if self.state.cars[car].passenger == Some(Passenger::Orange) => {},
+            Content::GreenHome if self.state.cars[car].passenger == Some(Passenger::Green) => {},
             Content::WildcardHome if self.state.cars[car].passenger.is_some() => {},
             _ => return,
         }
@@ -163,19 +172,21 @@ impl<'s> Stepper<'s> {
         self.mutations().push(Mutation { i, j, value: content as u8 });
     }
 
-    fn check_homes(&mut self, car: usize) {
-        if self.state.cars[car].passenger.is_none() { return; }
-        if self.state.i > 0 {
-            self.check_home(car, self.state.i - 1, self.state.j);
+    fn check_homes(&mut self, car_idx: usize) {
+        let car = self.state.cars[car_idx];
+        if car.passenger.is_none() { return; }
+        let (i, j) = (car.i, car.j);
+        if i > 0 {
+            self.check_home(car_idx, i - 1, j);
         }
-        if self.state.i < self.state.grid.height - 1 {
-            self.check_home(car, self.state.i + 1, self.state.j);
+        if i < self.state.grid.height - 1 {
+            self.check_home(car_idx, i + 1, j);
         }
-        if self.state.j > 0 {
-            self.check_home(car, self.state.i, self.state.j - 1);
+        if j > 0 {
+            self.check_home(car_idx, i, j - 1);
         }
-        if self.state.j < self.state.grid.width - 1 {
-            self.check_home(car, self.state.i, self.state.j + 1);
+        if j < self.state.grid.width - 1 {
+            self.check_home(car_idx, i, j + 1);
         }
     }
 
@@ -183,41 +194,57 @@ impl<'s> Stepper<'s> {
         // Cannot pick up if car full
         if self.state.cars[car].passenger.is_some() { return; }
 
+        let content = self.state.grid.get(i, j);
+        let passenger = match content {
+            Content::BlueGuy => Passenger::Blue,
+            Content::OrangeGuy => Passenger::Orange,
+            Content::GreenGuy => Passenger::Green,
+            _ => return,
+        };
+
+        // Cannot pick up if car stinks
+        if passenger != Passenger::Green && self.state.cars[car].stinks {
+            return;
+        }
+
         // Cannot pick up if there is another passenger waiting on the exact
         // opposite side of the car (must have a unique choice of passenger)
         let v = (i as i8 - self.state.cars[car].i as i8, j as i8 - self.state.cars[car].j as i8);
         let flip = (-v.0, -v.1);
         let opposite = (self.state.cars[car].i as i8 + flip.0, self.state.cars[car].j as i8 + flip.1);
-        if self.state.grid.get_signed(opposite.0, opposite.1).is_passenger() {
-            return;
+        if let Some(other) = self.state.grid.get_signed(opposite.0, opposite.1).passenger() {
+            // Exception: If the car stinks and the other passenger is not
+            // green, they will not attempt to board
+            if !(self.state.cars[car].stinks && other != Passenger::Green) {
+                return;
+            }
         }
 
-        let content = self.state.grid.get(i, j);
-        let passenger = match content {
-            Content::BlueGuy => Passenger::Blue,
-            Content::OrangeGuy => Passenger::Orange,
-            _ => return,
-        };
         self.state.cars[car].passenger = Some(passenger);
+        if passenger == Passenger::Green {
+            self.state.cars[car].stinks = true;
+        }
         self.passengers_taken += 1;
         self.state.waiting_passengers -= 1;
         *self.state.grid.get_mut(i, j) = Content::Obstacle as u8;
         self.mutations().push(Mutation { i, j, value: content as u8 });
     }
 
-    fn check_passengers(&mut self, car: usize) {
-        if self.state.cars[car].passenger.is_some() { return; }
-        if self.state.i > 0 {
-            self.check_passenger(car, self.state.i - 1, self.state.j);
+    fn check_passengers(&mut self, car_idx: usize) {
+        let car = &self.state.cars[car_idx];
+        if car.passenger.is_some() { return; }
+        let (i, j) = (car.i, car.j);
+        if i > 0 {
+            self.check_passenger(car_idx, i - 1, j);
         }
-        if self.state.i < self.state.grid.height - 1 {
-            self.check_passenger(car, self.state.i + 1, self.state.j);
+        if i < self.state.grid.height - 1 {
+            self.check_passenger(car_idx, i + 1, j);
         }
-        if self.state.j > 0 {
-            self.check_passenger(car, self.state.i, self.state.j - 1);
+        if j > 0 {
+            self.check_passenger(car_idx, i, j - 1);
         }
-        if self.state.j < self.state.grid.width - 1 {
-            self.check_passenger(car, self.state.i, self.state.j + 1);
+        if j < self.state.grid.width - 1 {
+            self.check_passenger(car_idx, i, j + 1);
         }
     }
 
@@ -252,6 +279,7 @@ struct Car {
     i: u8,
     j: u8,
     passenger: Option<Passenger>,
+    stinks: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -281,14 +309,15 @@ impl State {
                 i: grid.entry.0,
                 j: grid.entry.0,
                 passenger: None,
+                stinks: false,
             }; 3],
             empty_homes: grid.cells.iter().filter(|&&cell| {
                 let content = Content::from(cell);
-                matches!(content, Content::BlueHome | Content::OrangeHome | Content::WildcardHome)
+                matches!(content, Content::BlueHome | Content::OrangeHome | Content::GreenHome | Content::WildcardHome)
             }).count() as u8,
             waiting_passengers: grid.cells.iter().filter(|&&cell| {
                 let content = Content::from(cell);
-                content == Content::BlueGuy || content == Content::OrangeGuy
+                matches!(content, Content::BlueGuy | Content::OrangeGuy | Content::GreenGuy)
             }).count() as u8,
             grid,
             mutations: Vec::with_capacity(100),
@@ -323,12 +352,13 @@ fn solvable(state: &State, i: u8, j: u8) -> bool {
                 exit_found = true;
                 continue;
             },
-            Content::BlueGuy | Content::OrangeGuy => {
+            Content::BlueGuy | Content::OrangeGuy | Content::GreenGuy => {
                 reachable_passengers += 1;
                 continue;
             },
             Content::BlueHome
             | Content::OrangeHome
+            | Content::GreenHome
             | Content::WildcardHome => {
                 reachable_homes += 1;
                 continue;
@@ -454,6 +484,8 @@ fn parse_grid(grid: &str) -> Grid {
                 'B' => Content::BlueHome,
                 'o' => Content::OrangeGuy,
                 'O' => Content::OrangeHome,
+                'g' => Content::GreenGuy,
+                'G' => Content::GreenHome,
                 '?' => Content::WildcardHome,
                 _ => panic!("Invalid character in grid: {}", ch),
             };
@@ -476,6 +508,8 @@ impl Display for Grid {
                     Content::BlueHome => 'B',
                     Content::OrangeGuy => 'o',
                     Content::OrangeHome => 'O',
+                    Content::GreenGuy => 'g',
+                    Content::GreenHome => 'G',
                     Content::Obstacle => '/',
                     Content::WildcardHome => '?',
                 };
@@ -492,6 +526,14 @@ mod tests {
     use dedent::dedent;
 
     use super::*;
+
+    macro_rules! assert_eq_grid {
+        ($lhs:expr, $rhs:expr) => {{
+            let lhs = $lhs.trim();
+            let rhs = $rhs.trim();
+            assert!(lhs == rhs, "got:\n{}\n\nexpected:\n{}\n", lhs, rhs);
+        }}
+    }
 
     #[test]
     fn test_parse() {
@@ -512,7 +554,7 @@ mod tests {
         let grid = parse_grid(input);
         assert_eq!(grid.entry, (2, 0));
         let result = grid.to_string();
-        assert_eq!(result.trim(), expected.trim());
+        assert_eq_grid!(result, expected);
     }
 
     #[test]
@@ -606,7 +648,7 @@ mod tests {
             ..345.
         ");
         let got = format!("{}", solve(grid));
-        assert_eq!(got.trim(), expected.trim());
+        assert_eq_grid!(got, expected);
     }
 
     #[test]
@@ -634,11 +676,12 @@ mod tests {
             ..09876....
         ");
         let got = format!("{}", solve(grid));
-        assert_eq!(got.trim(), expected.trim());
+        assert_eq_grid!(got, expected);
     }
 
     #[test]
     fn test_solve_hard() {
+        // andromeda 14
         let grid = parse_grid(r"
            ....b...b..
            ...........
@@ -666,22 +709,136 @@ mod tests {
             .78./123/..
         ");
         let got = format!("{}", solve(grid));
-        assert_eq!(got.trim(), expected.trim());
+        assert_eq_grid!(got, expected);
+    }
+
+    #[test]
+    fn test_solve_passenger_conflict() {
+        let mut grid = parse_grid(r"
+            .x.....e.
+            .........
+            ..B/./B..
+            ../.../..
+            .........
+            B./....//
+            B.b/.b.b.
+            ..b......
+            .........
+        ");
+        grid.num_cars = 2;
+        let expected = dedent!(r"
+            .x.98761.
+            .2103452.
+            ..//2//3.
+            ../.10/4.
+            .345.965.
+            /2/6787//
+            /1//./8/.
+            .0/65.90.
+            .9874321.
+        ");
+        let got = format!("{}", solve(grid));
+        assert_eq_grid!(got, expected);
+    }
+
+    #[test]
+    fn test_solve_two_car() {
+        let mut grid = parse_grid(r"
+            .e........
+            ..........
+            ..b.....B.
+            ..b.../.B.
+            x.b.....B.
+            ..b./...B.
+            ..b.....B.
+            ..........
+            ..........
+        ");
+        grid.num_cars = 2;
+        let expected = dedent!(r"
+            .12345678.
+            3210987690
+            4./90345/1
+            56/812/./2
+            x7/7.109/3
+            18/6/278/4
+            09/5436./5
+            9012345096
+            8765432187
+        ");
+        let got = format!("{}", solve(grid));
+        assert_eq_grid!(got, expected);
+    }
+
+    #[test]
+    fn test_solve_wildcard() {
+        let mut grid = parse_grid(r"
+            ...........
+            ...........
+            .......?...
+            .o.b../?.b.
+            .o.....?.b.
+            ...........
+            ..........x
+            ...........
+        ");
+        grid.num_cars = 2;
+        let expected = dedent!(r"
+            1.7834..12.
+            2.6925..03.
+            3.5016./945
+            4/4b.7//8/6
+            5/3..8./7/7
+            612..9236.8
+            70...0145.x
+            89.........
+        ");
+        let got = format!("{}", solve(grid));
+        assert_eq_grid!(got, expected);
+    }
+
+    #[test]
+    fn test_solve_green() {
+        // delphinus 9
+        let mut grid = parse_grid(r"
+            G.....O
+            .......
+            .......
+            ..o.g..
+            e.....x
+            ..o.g..
+            .......
+            .......
+            G.....O
+        ");
+        grid.num_cars = 2;
+        let expected = dedent!(r"
+            /45678/
+            .30989.
+            .21670.
+            ../5/1.
+            1234.2x
+            .././30
+            ..98549
+            .107678
+            /23456/
+        ");
+        let got = format!("{}", solve(grid));
+        assert_eq_grid!(got, expected);
     }
 }
 
 fn main() {
     let mut grid = parse_grid(r"
-        ..........e.....
-        ...............x
-        ................
-        ...oo..bb...?O..
-        ............O?./
-        ............?O..
-        ...bb..oo...O?..
-        ................
-        ................
-        ................
+        .x.....e.
+        .........
+        ..B/./B..
+        ../.../..
+        .........
+        B./....//
+        B.b/.b.b.
+        ..b......
+        .........
     ");
     grid.num_cars = 2;
     let soln = solve(grid);
