@@ -1,19 +1,26 @@
+mod const_vec;
+pub mod graph;
 #[cfg(test)]
 mod tests;
 
 use std::fmt::Display;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Passenger {
+pub enum Passenger {
     Blue,
     Orange,
     Green,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Content {
+pub enum Content {
     None = 0,
-    Rail = 1,
+    Rail = 1, // Also every other unused number in the 0-255 range
+    Crossing = 242,
+    Wormhole1a = 243,
+    Wormhole1b = 244,
+    Wormhole2a = 245,
+    Wormhole2b = 246,
     GreenGuy = 247,
     GreenHome = 248,
     WildcardHome = 249,
@@ -61,7 +68,7 @@ impl Content {
 }
 
 #[derive(Clone, Debug)]
-struct Grid {
+pub struct Grid {
     width: u8,
     height: u8,
     cells: Vec<u8>,
@@ -366,7 +373,13 @@ fn solvable(state: &State, i: u8, j: u8) -> bool {
                 reachable_homes += 1;
                 continue;
             },
-            Content::Rail | Content::Obstacle => {
+            Content::Rail
+            | Content::Obstacle
+            | Content::Crossing
+            | Content::Wormhole1a
+            | Content::Wormhole1b
+            | Content::Wormhole2a
+            | Content::Wormhole2b => {
                 continue;
             },
         }
@@ -477,7 +490,7 @@ fn parse_grid(grid: &str) -> Grid {
         for (j, ch) in line.chars().enumerate() {
             let cell = match ch {
                 '.' => Content::None,
-                '#' => Content::Rail,
+                '0'..='9' => Content::Rail,
                 '/' => Content::Obstacle,
                 'e' => {
                     assert!(entry.is_none(), "multiple entrances");
@@ -492,6 +505,11 @@ fn parse_grid(grid: &str) -> Grid {
                 'g' => Content::GreenGuy,
                 'G' => Content::GreenHome,
                 '?' => Content::WildcardHome,
+                '#' => Content::Crossing,
+                'w' => Content::Wormhole1a,
+                'W' => Content::Wormhole1b,
+                'v' => Content::Wormhole2a,
+                'V' => Content::Wormhole2b,
                 _ => panic!("Invalid character in grid: {}", ch),
             };
             *grid.get_mut(i as u8, j as u8) = cell as u8;
@@ -519,6 +537,11 @@ impl Display for Grid {
                     Content::GreenHome => 'G',
                     Content::Obstacle => '/',
                     Content::WildcardHome => '?',
+                    Content::Crossing => '#',
+                    Content::Wormhole1a => 'w',
+                    Content::Wormhole1b => 'W',
+                    Content::Wormhole2a => 'v',
+                    Content::Wormhole2b => 'V',
                 };
                 write!(f, "{}", ch)?;
             }
